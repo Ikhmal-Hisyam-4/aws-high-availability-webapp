@@ -84,3 +84,8 @@ Supply the DB password via `TF_VAR_db_master_password` (CI variable) or a local
   supply a real ACM cert ARN before apply.
 - Single region by design (no Johor on AWS). DR = Multi-AZ + backups; a
   second-region warm standby is a documented future add-on.
+
+## CI/CD
+
+- `validate` runs free on every commit.
+- `plan` runs against AWS (proves the code applies); `apply` is manual (gated).
