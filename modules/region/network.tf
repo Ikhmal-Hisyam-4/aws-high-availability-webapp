@@ -1,6 +1,6 @@
 # Networking: one VPC, public + private subnet per AZ, single NAT gateway for
 # private-subnet outbound. for_each over var.availability_zones makes the AZ
-# count data-driven (no copy-paste) — same pattern as the Alibaba module.
+# count data-driven (no copy-paste).
 
 locals {
   common_tags = merge(var.tags, {

@@ -42,7 +42,7 @@ resource "aws_cloudwatch_metric_alarm" "be_cpu" {
   tags                = local.common_tags
 }
 
-# --- Aurora replica lag (the AWS twin of the Alibaba MySQL_SlaveLatency alarm) ---
+# --- Aurora replica lag: alerts if a reader falls behind the writer ---
 resource "aws_cloudwatch_metric_alarm" "aurora_replica_lag" {
   alarm_name          = "${var.name_prefix}-aurora-replica-lag"
   namespace           = "AWS/RDS"
@@ -76,8 +76,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
 }
 
 # --- Route 53 health check: external probe of the public ALB (the "region-dark"
-# probe — the AWS twin of the Alibaba CloudMonitor Site Monitor). Route 53
-# evaluates it from multiple global checkers. ---
+# probe). Route 53 evaluates it from multiple global checkers. ---
 resource "aws_route53_health_check" "public_endpoint" {
   fqdn              = aws_lb.public.dns_name
   type              = "HTTPS"

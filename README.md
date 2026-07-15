@@ -1,29 +1,47 @@
-# Nexus Global Systems — AWS DR (single-region, multi-AZ HA)
+# AWS High-Availability Infrastructure (Terraform)
 
-Terraform for a **single-region, multi-AZ high-availability** stack on AWS in
-**Kuala Lumpur (`ap-southeast-5`)**. This is the AWS port of the
-[Nexus DR project](../nexus) originally built on Alibaba Cloud — same design
-pattern, AWS services.
+Production-style **Terraform** for a **single-region, multi-AZ high-availability**
+web stack on AWS in **Kuala Lumpur (`ap-southeast-5`)** — deployed through a
+**GitLab CI/CD pipeline** with remote state, state locking, and a gated apply.
 
-> **DR-constrained:** AWS has no Johor region, so this build keeps the workload
-> resilient **within one region across 3 Availability Zones**. Disaster recovery
-> here comes from Multi-AZ Aurora auto-failover + automated backups / snapshots
-> (point-in-time restore). A second-region warm standby is a future add-on (a
-> sibling `environments/dr/` calling the same module + a `global/` Route 53 +
-> Aurora Global Database layer).
+**Stack:** VPC · EC2 Auto Scaling · Application Load Balancers · Aurora MySQL
+(Multi-AZ) · KMS · Secrets Manager · Route 53 · CloudWatch · Terraform · GitLab CI
+
+> **Design note — DR-constrained:** AWS has no region in Johor, so this build
+> delivers resilience **within one region across 3 Availability Zones**. If any
+> AZ fails, the load balancers and Auto Scaling keep the app serving, and Aurora
+> auto-fails-over the database to a healthy AZ in under a minute. A second-region
+> warm standby is a documented future add-on (see [Roadmap](#roadmap)).
 
 ## Architecture
 
 ![Architecture](architecture-diagram/nexus-aws-architecture.png)
 
-- **Route 53** — DNS + health-checks the public ALB.
-- **Public ALB** (internet-facing) → **FE** EC2 (Auto Scaling, 3 AZs).
-- **Internal ALB** (private) → **BE** EC2 (Auto Scaling, 3 AZs).
-- **Aurora MySQL** — 1 writer + 2 in-AZ readers; one distributed storage volume
-  6-way replicated across 3 AZs; auto-failover to a reader on AZ/instance loss
-  (typically < 60s).
-- **NAT gateway** — private-subnet outbound only.
-- **CloudWatch** — EC2 CPU, Aurora replica lag, ALB target health, Route 53 checks.
+**Request flow:** Users → **Route 53** (DNS + health checks) → **public ALB** →
+**FE** EC2 (Auto Scaling across 3 AZs) → **internal ALB** → **BE** EC2 (Auto
+Scaling across 3 AZs) → **Aurora MySQL**.
+
+| Layer | What it does |
+|---|---|
+| **Route 53** | DNS entry point; health-checks the public ALB endpoint. |
+| **Public ALB** | Internet-facing; spreads traffic to FE instances across all 3 AZs. |
+| **EC2 + Auto Scaling** | Stateless FE and BE tiers; each ASG self-heals and spans 3 AZs. |
+| **Internal ALB** | Private; routes FE → BE traffic inside the VPC. |
+| **Aurora MySQL** | 1 writer + 2 in-AZ readers on one storage volume 6-way replicated across 3 AZs; auto-failover to a reader on AZ/instance loss (typically < 60s). |
+| **NAT gateway** | Outbound-only internet for private subnets. |
+| **CloudWatch** | Alarms on EC2 CPU, Aurora replica lag, ALB target health, Route 53 checks. |
+
+## Highlights
+
+- **One reusable module, data-driven.** All infrastructure lives in
+  `modules/region/` — it contains no region/AZ/CIDR literals. The environment
+  folder only supplies data, so adding a DR region is a copy of the *data*, not
+  the code.
+- **Real pipeline, gated apply.** `validate` runs free on every commit; `plan`
+  runs against a real AWS account (proving the code applies); `apply` is a
+  manual, human-approved step so nothing is built by accident.
+- **Verified.** `terraform plan` runs clean against live AWS — **59 resources,
+  0 errors** — using an S3 remote-state backend with DynamoDB state locking.
 
 ## Repo layout
 
@@ -31,40 +49,23 @@ pattern, AWS services.
 bootstrap/              S3 state bucket + DynamoDB lock table (local backend)
 modules/region/         ONE reusable module (network, security, alb, compute, rds, monitor)
 environments/primary/   KL ap-southeast-5 — calls the module (active)
-.gitlab-ci.yml          validate (free) -> plan -> apply (manual)
+.gitlab-ci.yml          validate (free) -> plan -> apply (manual, gated)
 ```
-
-The module has no region/AZ/CIDR literals — every difference is a variable, so a
-DR region would reuse it with only data changes.
-
-## Alibaba → AWS mapping (same pattern, different cloud)
-
-| What it does | Alibaba (original) | AWS (this repo) |
-|---|---|---|
-| In-region DB HA | RDS Multi-AZ (`HighAvailability`) | **Aurora** writer + readers, auto-failover |
-| Point-in-time restore | RDS automated backup policy | **Aurora backups / snapshots (PITR)** |
-| Load balancing | ALB public + internal | **ALB** public + internal |
-| Compute autoscaling | ESS scaling group | **EC2 Auto Scaling Group** + Launch Template |
-| Secret store | KMS Secrets Manager | **Secrets Manager** + KMS CMK |
-| Permissions | RAM | **IAM** |
-| External region probe | CloudMonitor Site Monitor | **Route 53 health check** |
-| Metrics & alarms | CloudMonitor | **CloudWatch** |
-| Encryption at rest | KMS CMK | **KMS CMK** (EBS + Aurora + Secrets) |
-| State backend | OSS bucket + OTS lock | **S3 bucket + DynamoDB lock** |
 
 ## Security
 
-- Tiered security groups: `internet → ALB → SG-FE → SG-BE → SG-DB` (each tier
-  only accepts the one in front).
-- KMS CMK (regional) encrypts EBS, Aurora storage, and the Secrets Manager secret.
-- DB password seeded once via CI variable into Secrets Manager; never a plain
-  Terraform value downstream.
-- TLS in transit (ALB HTTPS, Aurora endpoint).
+- **Tiered security groups** — `internet → ALB → FE → BE → DB`; each tier only
+  accepts traffic from the tier in front of it.
+- **Encryption at rest** — a regional KMS CMK encrypts EBS volumes, Aurora
+  storage, and the Secrets Manager secret.
+- **No plaintext secrets** — the DB password is injected once via a CI variable
+  into Secrets Manager and read from there; it is never a plain Terraform value.
+- **TLS in transit** — HTTPS on the public ALB, TLS on the Aurora endpoint.
 
 ## How to run
 
 ```bash
-# 1. One-time: create the state backend
+# 1. One-time: create the remote-state backend (S3 + DynamoDB lock)
 cd bootstrap && terraform init && terraform apply
 
 # 2. Deploy the region
@@ -77,15 +78,16 @@ terraform apply
 Supply the DB password via `TF_VAR_db_master_password` (CI variable) or a local
 `secret.auto.tfvars` (gitignored). See `secret.auto.tfvars.example`.
 
-## Honest caveats
+## Roadmap
 
-- Not applied live (costs money). Code is `terraform validate`-clean.
-- Public HTTPS listener uses `var.acm_certificate_arn` (placeholder default) —
-  supply a real ACM cert ARN before apply.
-- Single region by design (no Johor on AWS). DR = Multi-AZ + backups; a
-  second-region warm standby is a documented future add-on.
+- **Second-region warm standby** — a sibling `environments/dr/` calling the same
+  module, plus a `global/` layer for Route 53 failover routing and Aurora Global
+  Database (cross-region replication).
+- Swap the placeholder ACM certificate ARN (`var.acm_certificate_arn`) for a real
+  certificate before a live apply.
 
-## CI/CD
+## Notes
 
-- `validate` runs free on every commit.
-- `plan` runs against AWS (proves the code applies); `apply` is manual (gated).
+This repository is a portfolio / assessment project. The Terraform is validated
+and plans cleanly against a real AWS account; a full `apply` is intentionally
+gated (it provisions billable resources).

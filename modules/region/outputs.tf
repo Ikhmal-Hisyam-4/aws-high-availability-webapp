@@ -1,5 +1,5 @@
 # Outputs for operator visibility (and for a future global/ layer if a DR region
-# is ever added — it would read these via remote state, like the Alibaba design).
+# is ever added — it would read these via remote state).
 
 output "vpc_id" {
   description = "VPC ID."

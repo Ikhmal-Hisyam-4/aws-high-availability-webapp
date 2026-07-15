@@ -2,9 +2,9 @@
 #
 # Aurora is ONE distributed storage volume, 6-way replicated across 3 AZs. The
 # cluster has a single writer + reader instances; on writer/AZ loss Aurora
-# auto-fails-over to a reader (typically < 60s) — that is the in-region HA story
-# (the AWS twin of Alibaba RDS Multi-AZ). Snapshots + PITR cover logical
-# corruption (the twin of the Alibaba automated-backup policy).
+# auto-fails-over to a reader (typically < 60s) — that is the in-region HA story.
+# Automated backups + snapshots (PITR) cover logical corruption (bad deploy,
+# dropped table) that replication would otherwise faithfully copy.
 
 # Cluster spans the private subnets across all AZs.
 resource "aws_db_subnet_group" "this" {

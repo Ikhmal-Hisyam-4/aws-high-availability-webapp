@@ -1,6 +1,6 @@
 # Region module inputs. Every region/AZ/CIDR/sizing value is a variable here; the
 # module body has no region or AZ literals, so the same module can be reused for
-# another region with only data changes (mirrors the Alibaba design).
+# another region with only data changes.
 
 variable "region_role" {
   description = "Logical role of this region instance: 'primary' (active) or 'dr' (standby). Drives tagging."
